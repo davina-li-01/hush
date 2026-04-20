@@ -35,6 +35,14 @@ const BOSTON = { lat: 42.36, lng: -71.06 };
 const STORAGE_KEY = 'hush_state_v2';
 const AUTH_USERS_KEY = 'hush_auth_users_v1';
 const AUTH_SESSION_KEY = 'hush_auth_session_v1';
+const BASEMAP_DAY = {
+  url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  attribution: '© OpenStreetMap contributors © CARTO',
+};
+const BASEMAP_NAV = {
+  url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  attribution: '© OpenStreetMap contributors © CARTO',
+};
 
 const state = {
   userProfile: { selectedIllness: '' },
@@ -78,6 +86,11 @@ const state = {
   drawerOpen: false,
   navigationActive: false,
   navigationEtaTs: null,
+  destinationSuggestions: [],
+  destinationSuggestionsOpen: false,
+  navInstruction: '',
+  navStepDistanceM: null,
+  navSpeedKmh: 0,
 };
 
 let map = null;
@@ -90,6 +103,8 @@ let routePolyline = null;
 let locationWatchId = null;
 let lastRerouteAt = 0;
 let lastRerouteFrom = null;
+let baseTileLayer = null;
+let suggestionDebounceId = null;
 
 function saveState() {
   const data = {
@@ -605,12 +620,14 @@ function renderMain() {
 
 function mapHTML() {
   const preview = routePreviewHTML();
-  return `<section class="map-wrap">
+  return `<section class="map-wrap ${state.navigationActive ? 'nav-mode' : ''}">
     <div class="map-top-card">
       <div class="search-main-row">
-        <input id="map-search" value="${escapeHtml(state.searchLocationText)}" placeholder="Search destination" onkeydown="if(event.key==='Enter'){searchLocation();}">
+        <input id="map-search" value="${escapeHtml(state.searchLocationText)}" placeholder="Search destination" oninput="onMapSearchInput(this.value)" onkeydown="if(event.key==='Enter'){searchLocation();}">
         <button class="btn primary icon-btn" onclick="searchLocation()">${icon('search', 18)}</button>
       </div>
+
+      <div id="destination-suggestions-slot">${destinationSuggestionsHTML()}</div>
 
       <div class="nav-action-row">
         <button class="btn ghost" onclick="centerOnCurrentLocation()">${icon('locate-fixed', 16)} <span>Locate Me</span></button>
@@ -635,20 +652,108 @@ function mapHTML() {
 function navigationOverlayHTML() {
   if (!state.navigationActive || !state.routeInfo) return '';
   const arrival = state.navigationEtaTs ? new Date(state.navigationEtaTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+  const instruction = state.navInstruction || 'Continue straight';
+  const nextStepKm = state.navStepDistanceM ? `${(state.navStepDistanceM / 1000).toFixed(1)} km` : '--';
   return `<div class="nav-overlay-card">
     <div class="nav-overlay-top">
       <div>
         <div class="subtle">Navigation active</div>
-        <strong>${escapeHtml(state.destinationLocation?.label || 'Destination')}</strong>
+        <strong>${escapeHtml(instruction)}</strong>
+        <div class="subtle">to ${escapeHtml(state.destinationLocation?.label || 'Destination')}</div>
       </div>
       <button class="btn ghost nav-end-btn" onclick="endNavigation()">${icon('square', 14)} End</button>
     </div>
     <div class="nav-overlay-stats">
       <div><span>Arrival</span><strong>${arrival}</strong></div>
-      <div><span>Duration</span><strong>${Math.max(1, Math.round(state.routeInfo.durationMin))} min</strong></div>
+      <div><span>Next Step</span><strong>${nextStepKm}</strong></div>
       <div><span>Distance</span><strong>${state.routeInfo.distanceKm.toFixed(1)} km</strong></div>
+      <div><span>Speed</span><strong>${Math.round(state.navSpeedKmh)} km/h</strong></div>
+      <div><span>Duration</span><strong>${Math.max(1, Math.round(state.routeInfo.durationMin))} min</strong></div>
+      <div><span>Mode</span><strong>Live</strong></div>
     </div>
   </div>`;
+}
+
+function destinationSuggestionsHTML() {
+  if (!state.destinationSuggestionsOpen || !state.destinationSuggestions.length) return '';
+  return `<div class="search-suggestions">
+    ${state.destinationSuggestions
+      .map(
+        (item, idx) => `<button class="search-suggestion-item" onclick="selectDestinationSuggestion(${idx})">
+          <span>${icon('map-pin', 14)}</span>
+          <span>${escapeHtml(item.label)}</span>
+        </button>`
+      )
+      .join('')}
+  </div>`;
+}
+
+function updateDestinationSuggestionsUI() {
+  const slot = document.getElementById('destination-suggestions-slot');
+  if (!slot) return;
+  slot.innerHTML = destinationSuggestionsHTML();
+  refreshIcons();
+}
+
+function clearDestinationSuggestions() {
+  state.destinationSuggestions = [];
+  state.destinationSuggestionsOpen = false;
+  updateDestinationSuggestionsUI();
+}
+
+function onMapSearchInput(raw) {
+  state.searchLocationText = raw;
+  saveState();
+
+  const query = raw.trim();
+  if (query.length < 2) {
+    clearDestinationSuggestions();
+    return;
+  }
+
+  if (suggestionDebounceId) clearTimeout(suggestionDebounceId);
+  suggestionDebounceId = setTimeout(() => {
+    fetchDestinationSuggestions(query);
+  }, 250);
+}
+
+async function fetchDestinationSuggestions(query) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&q=${encodeURIComponent(query)}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    state.destinationSuggestions = Array.isArray(data)
+      ? data.map((item) => ({
+          lat: Number(item.lat),
+          lng: Number(item.lon),
+          label: item.display_name,
+        }))
+      : [];
+    state.destinationSuggestionsOpen = state.destinationSuggestions.length > 0;
+    updateDestinationSuggestionsUI();
+  } catch {
+    clearDestinationSuggestions();
+  }
+}
+
+async function selectDestinationSuggestion(index) {
+  const item = state.destinationSuggestions[index];
+  if (!item) return;
+  state.destinationLocation = { lat: item.lat, lng: item.lng, label: item.label };
+  state.searchLocationText = item.label;
+  saveState();
+
+  const input = document.getElementById('map-search');
+  if (input) input.value = item.label;
+
+  if (map) {
+    map.setView([item.lat, item.lng], 14);
+    state.mapData = buildMockFactorData(item.lat, item.lng);
+    fetchRealtimeAreaEventsHeat(item.lat, item.lng).finally(() => drawMapOverlays());
+    drawNavigationOverlays();
+    updateRoutePreviewUI();
+  }
+  clearDestinationSuggestions();
 }
 
 function updateRoutePreviewUI() {
@@ -987,13 +1092,14 @@ function initMapView() {
     }
 
     map = L.map('map', { zoomControl: false }).setView([BOSTON.lat, BOSTON.lng], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
-    }).addTo(map);
+    applyMapStyle(state.navigationActive ? 'nav' : 'day');
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    map.on('click', (ev) => openMapClickEventModal(ev.latlng));
+    map.on('click', (ev) => {
+      clearDestinationSuggestions();
+      openMapClickEventModal(ev.latlng);
+    });
 
     state.mapData = buildMockFactorData(BOSTON.lat, BOSTON.lng);
 
@@ -1069,8 +1175,15 @@ async function searchLocation() {
   state.searchLocationText = query;
   saveState();
 
+  const exactSuggestion = state.destinationSuggestions.find((s) => s.label.toLowerCase() === query.toLowerCase());
+  if (exactSuggestion) {
+    await selectDestinationSuggestion(state.destinationSuggestions.indexOf(exactSuggestion));
+    if (state.navigationActive) await fetchRouteFromCurrentLocation(true);
+    return;
+  }
+
   try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&q=${encodeURIComponent(query)}`);
     const data = await res.json();
     if (!Array.isArray(data) || !data.length) {
       showToast('No destination match found. Try another search term.', 2600);
@@ -1080,6 +1193,7 @@ async function searchLocation() {
     const lng = Number(data[0].lon);
 
     state.destinationLocation = { lat, lng, label: data[0].display_name || query };
+  clearDestinationSuggestions();
 
     map.setView([lat, lng], 13);
     state.mapData = buildMockFactorData(lat, lng);
@@ -1141,6 +1255,7 @@ function ensureLiveLocationWatch() {
         lat: position.coords.latitude,
         lng: position.coords.longitude,
       };
+      state.navSpeedKmh = Math.max(0, Number(position.coords.speed || 0) * 3.6);
       state.locationError = '';
       drawNavigationOverlays();
 
@@ -1162,10 +1277,7 @@ function ensureLiveLocationWatch() {
 async function maybeUpdateLiveNavigation() {
   if (!state.navigationActive || !state.currentLocation || !state.destinationLocation || !map) return;
 
-  map.panTo([state.currentLocation.lat, state.currentLocation.lng], {
-    animate: true,
-    duration: 0.45,
-  });
+  followUserPOV();
 
   const now = Date.now();
   const movedKm = lastRerouteFrom
@@ -1222,6 +1334,26 @@ function drawNavigationOverlays() {
   }
 }
 
+function followUserPOV() {
+  if (!map || !state.currentLocation) return;
+  if (!state.navigationActive) {
+    map.panTo([state.currentLocation.lat, state.currentLocation.lng], {
+      animate: true,
+      duration: 0.35,
+    });
+    return;
+  }
+
+  const targetZoom = Math.max(16, map.getZoom());
+  const point = map.project([state.currentLocation.lat, state.currentLocation.lng], targetZoom);
+  const offsetPoint = L.point(point.x, point.y + 140);
+  const shifted = map.unproject(offsetPoint, targetZoom);
+  map.setView([shifted.lat, shifted.lng], targetZoom, {
+    animate: true,
+    duration: 0.55,
+  });
+}
+
 async function startNavigation() {
   if (!state.currentLocation) {
     await centerOnCurrentLocation();
@@ -1242,13 +1374,19 @@ async function startNavigation() {
   }
 
   state.navigationActive = true;
+  applyMapStyle('nav');
+  if (map) map.setZoom(Math.max(16, map.getZoom()));
   await fetchRouteFromCurrentLocation();
+  followUserPOV();
   updateNavigationOverlayUI();
 }
 
 function endNavigation() {
   state.navigationActive = false;
   state.navigationEtaTs = null;
+  state.navInstruction = '';
+  state.navStepDistanceM = null;
+  applyMapStyle('day');
   if (routePolyline && map) {
     map.removeLayer(routePolyline);
     routePolyline = null;
@@ -1261,7 +1399,7 @@ async function fetchRouteFromCurrentLocation(silent = false) {
   const to = state.destinationLocation;
   if (!from || !to || !map) return;
 
-  const url = `https://router.project-osrm.org/route/v1/foot/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+  const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true`;
 
   try {
     const response = await fetch(url);
@@ -1269,6 +1407,7 @@ async function fetchRouteFromCurrentLocation(silent = false) {
     const data = await response.json();
     const route = data?.routes?.[0];
     if (!route?.geometry?.coordinates?.length) throw new Error('No route found');
+    const firstStep = route?.legs?.[0]?.steps?.[0];
 
     const latlngs = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
 
@@ -1278,19 +1417,23 @@ async function fetchRouteFromCurrentLocation(silent = false) {
     }
 
     routePolyline = L.polyline(latlngs, {
-      color: '#a78bfa',
-      weight: 5,
-      opacity: 0.9,
+      color: '#3b82f6',
+      weight: 6,
+      opacity: 0.95,
       lineJoin: 'round',
     }).addTo(map);
 
-    map.fitBounds(routePolyline.getBounds(), { padding: [22, 22] });
+    if (!state.navigationActive) {
+      map.fitBounds(routePolyline.getBounds(), { padding: [22, 22] });
+    }
 
     state.routeInfo = {
       distanceKm: route.distance / 1000,
       durationMin: route.duration / 60,
     };
     state.navigationEtaTs = Date.now() + route.duration * 1000;
+    state.navInstruction = firstStep?.maneuver?.instruction || 'Continue to destination';
+    state.navStepDistanceM = firstStep?.distance || null;
     updateRoutePreviewUI();
     updateNavigationOverlayUI();
     if (!silent) {
@@ -1514,6 +1657,19 @@ function randomMetric(seed) {
   return Math.round((base + Date.now() / 1000) % 40 + 55);
 }
 
+function applyMapStyle(mode = 'day') {
+  if (!map) return;
+  const style = mode === 'nav' ? BASEMAP_NAV : BASEMAP_DAY;
+  if (baseTileLayer) {
+    map.removeLayer(baseTileLayer);
+    baseTileLayer = null;
+  }
+  baseTileLayer = L.tileLayer(style.url, {
+    attribution: style.attribution,
+    maxZoom: 20,
+  }).addTo(map);
+}
+
 function icon(name, size = 16) {
   return `<i data-lucide="${name}" data-size="${size}"></i>`;
 }
@@ -1556,6 +1712,8 @@ window.addTrigger = addTrigger;
 window.removeTrigger = removeTrigger;
 window.finishOnboarding = finishOnboarding;
 window.toggleFactor = toggleFactor;
+window.onMapSearchInput = onMapSearchInput;
+window.selectDestinationSuggestion = selectDestinationSuggestion;
 window.searchLocation = searchLocation;
 window.centerOnCurrentLocation = centerOnCurrentLocation;
 window.startNavigation = startNavigation;
