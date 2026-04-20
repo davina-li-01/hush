@@ -76,6 +76,8 @@ const state = {
   sessionEmail: '',
   mapHintShown: false,
   drawerOpen: false,
+  navigationActive: false,
+  navigationEtaTs: null,
 };
 
 let map = null;
@@ -86,6 +88,8 @@ let userLocationMarker = null;
 let destinationMarker = null;
 let routePolyline = null;
 let locationWatchId = null;
+let lastRerouteAt = 0;
+let lastRerouteFrom = null;
 
 function saveState() {
   const data = {
@@ -145,15 +149,20 @@ function setTab(tab) {
 
 function openDrawer() {
   state.drawerOpen = true;
-  document.querySelector('.drawer')?.classList.add('open');
-  document.querySelector('.drawer-backdrop')?.classList.add('open');
+  const drawer = document.querySelector('.drawer');
+  const backdrop = document.querySelector('.drawer-backdrop');
+  if (!drawer || !backdrop) return;
+  drawer.classList.add('open');
+  backdrop.classList.add('open');
 }
 
 function closeDrawer() {
-  if (!state.drawerOpen) return;
   state.drawerOpen = false;
-  document.querySelector('.drawer')?.classList.remove('open');
-  document.querySelector('.drawer-backdrop')?.classList.remove('open');
+  const drawer = document.querySelector('.drawer');
+  const backdrop = document.querySelector('.drawer-backdrop');
+  if (!drawer || !backdrop) return;
+  drawer.classList.remove('open');
+  backdrop.classList.remove('open');
 }
 
 function render() {
@@ -548,8 +557,8 @@ function shellHTML() {
     : '<li class="subtle">No triggers added yet</li>';
 
   return `<section class="shell view">
-    <div class="drawer-backdrop ${state.drawerOpen ? 'open' : ''}" onclick="closeDrawer()"></div>
-    <aside class="drawer ${state.drawerOpen ? 'open' : ''}">
+    <div class="drawer-backdrop" onclick="closeDrawer()"></div>
+    <aside class="drawer">
       <div class="drawer-header">
         <h3>Menu</h3>
         <button class="icon" onclick="closeDrawer()">${icon('x', 20)}</button>
@@ -611,7 +620,10 @@ function mapHTML() {
       <div id="route-preview-slot">${preview}</div>
     </div>
 
-    <div id="map"></div>
+    <div class="map-stage">
+      <div id="map"></div>
+      <div id="nav-overlay-slot">${navigationOverlayHTML()}</div>
+    </div>
 
     <details class="filters-panel" open>
       <summary>Environmental Filters</summary>
@@ -620,10 +632,36 @@ function mapHTML() {
   </section>`;
 }
 
+function navigationOverlayHTML() {
+  if (!state.navigationActive || !state.routeInfo) return '';
+  const arrival = state.navigationEtaTs ? new Date(state.navigationEtaTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+  return `<div class="nav-overlay-card">
+    <div class="nav-overlay-top">
+      <div>
+        <div class="subtle">Navigation active</div>
+        <strong>${escapeHtml(state.destinationLocation?.label || 'Destination')}</strong>
+      </div>
+      <button class="btn ghost nav-end-btn" onclick="endNavigation()">${icon('square', 14)} End</button>
+    </div>
+    <div class="nav-overlay-stats">
+      <div><span>Arrival</span><strong>${arrival}</strong></div>
+      <div><span>Duration</span><strong>${Math.max(1, Math.round(state.routeInfo.durationMin))} min</strong></div>
+      <div><span>Distance</span><strong>${state.routeInfo.distanceKm.toFixed(1)} km</strong></div>
+    </div>
+  </div>`;
+}
+
 function updateRoutePreviewUI() {
   const slot = document.getElementById('route-preview-slot');
   if (!slot) return;
   slot.innerHTML = routePreviewHTML();
+  refreshIcons();
+}
+
+function updateNavigationOverlayUI() {
+  const slot = document.getElementById('nav-overlay-slot');
+  if (!slot) return;
+  slot.innerHTML = navigationOverlayHTML();
   refreshIcons();
 }
 
@@ -967,6 +1005,8 @@ function initMapView() {
     setTimeout(() => map?.invalidateSize(), 150);
     await centerOnCurrentLocation(true);
     ensureLiveLocationWatch();
+    updateNavigationOverlayUI();
+    updateRoutePreviewUI();
 
     if (!state.mapHintShown) {
       showToast('Tip: Tap anywhere on the map to add an event in that location.', 3500);
@@ -1047,6 +1087,11 @@ async function searchLocation() {
     drawMapOverlays();
     drawNavigationOverlays();
     updateRoutePreviewUI();
+    if (state.navigationActive) {
+      await fetchRouteFromCurrentLocation(true);
+    } else {
+      updateNavigationOverlayUI();
+    }
   } catch {
     showToast('Location search failed. Please try another query.', 3000);
   }
@@ -1098,6 +1143,10 @@ function ensureLiveLocationWatch() {
       };
       state.locationError = '';
       drawNavigationOverlays();
+
+      if (state.navigationActive) {
+        maybeUpdateLiveNavigation();
+      }
     },
     (error) => {
       state.locationError = error?.message || 'Live location tracking unavailable.';
@@ -1108,6 +1157,38 @@ function ensureLiveLocationWatch() {
       maximumAge: 10000,
     }
   );
+}
+
+async function maybeUpdateLiveNavigation() {
+  if (!state.navigationActive || !state.currentLocation || !state.destinationLocation || !map) return;
+
+  map.panTo([state.currentLocation.lat, state.currentLocation.lng], {
+    animate: true,
+    duration: 0.45,
+  });
+
+  const now = Date.now();
+  const movedKm = lastRerouteFrom
+    ? haversineKm(lastRerouteFrom.lat, lastRerouteFrom.lng, state.currentLocation.lat, state.currentLocation.lng)
+    : Infinity;
+
+  if (now - lastRerouteAt > 12000 || movedKm > 0.08) {
+    await fetchRouteFromCurrentLocation(true);
+    lastRerouteAt = now;
+    lastRerouteFrom = { ...state.currentLocation };
+  }
+
+  const remainingKm = haversineKm(
+    state.currentLocation.lat,
+    state.currentLocation.lng,
+    state.destinationLocation.lat,
+    state.destinationLocation.lng
+  );
+
+  if (remainingKm < 0.08) {
+    showToast('You have arrived at your destination.', 3200);
+    endNavigation();
+  }
 }
 
 function drawNavigationOverlays() {
@@ -1160,10 +1241,22 @@ async function startNavigation() {
     return;
   }
 
+  state.navigationActive = true;
   await fetchRouteFromCurrentLocation();
+  updateNavigationOverlayUI();
 }
 
-async function fetchRouteFromCurrentLocation() {
+function endNavigation() {
+  state.navigationActive = false;
+  state.navigationEtaTs = null;
+  if (routePolyline && map) {
+    map.removeLayer(routePolyline);
+    routePolyline = null;
+  }
+  updateNavigationOverlayUI();
+}
+
+async function fetchRouteFromCurrentLocation(silent = false) {
   const from = state.currentLocation;
   const to = state.destinationLocation;
   if (!from || !to || !map) return;
@@ -1197,13 +1290,18 @@ async function fetchRouteFromCurrentLocation() {
       distanceKm: route.distance / 1000,
       durationMin: route.duration / 60,
     };
+    state.navigationEtaTs = Date.now() + route.duration * 1000;
     updateRoutePreviewUI();
-    showToast(`Route ready: ${state.routeInfo.distanceKm.toFixed(1)} km · ${Math.round(state.routeInfo.durationMin)} min`, 3500);
+    updateNavigationOverlayUI();
+    if (!silent) {
+      showToast(`Route ready: ${state.routeInfo.distanceKm.toFixed(1)} km · ${Math.round(state.routeInfo.durationMin)} min`, 3500);
+    }
   } catch (error) {
     state.routeInfo = null;
     state.locationError = error?.message || 'Unable to build route.';
     updateRoutePreviewUI();
-    showToast(state.locationError, 3200);
+    updateNavigationOverlayUI();
+    if (!silent) showToast(state.locationError, 3200);
   }
 }
 
@@ -1461,6 +1559,7 @@ window.toggleFactor = toggleFactor;
 window.searchLocation = searchLocation;
 window.centerOnCurrentLocation = centerOnCurrentLocation;
 window.startNavigation = startNavigation;
+window.endNavigation = endNavigation;
 window.openProfileModal = openProfileModal;
 window.closeModal = closeModal;
 window.logout = logout;

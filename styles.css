@@ -260,8 +260,16 @@ input:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform;
+  backface-visibility: hidden;
 }
-.drawer.open { transform: translateX(0); }
+.drawer.open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
 .drawer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .drawer-item {
   width: 100%;
@@ -370,10 +378,59 @@ input:disabled {
 .route-subtle { font-size: 13px; color: #f5f2ff; }
 .route-meta { font-size: 13px; font-weight: 700; color: #fff; }
 
+.map-stage {
+  position: relative;
+}
+
 #map {
   height: 100%;
   width: 100%;
   min-height: 320px;
+}
+
+.nav-overlay-card {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  background: rgba(16, 12, 28, 0.92);
+  box-shadow: var(--shadow);
+  padding: 10px;
+  z-index: 420;
+}
+.nav-overlay-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.nav-end-btn {
+  min-height: 34px;
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+.nav-overlay-stats {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.nav-overlay-stats > div {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+}
+.nav-overlay-stats span {
+  font-size: 11px;
+  color: #bfb7d9;
+}
+.nav-overlay-stats strong {
+  font-size: 13px;
 }
 .map-factor-marker {
   animation: markerPop .22s ease-out;
