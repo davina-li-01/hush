@@ -1,12 +1,12 @@
 const FACTORS = [
-  { name: 'Noise', color: '#7c3aed', icon: '🔊' },
-  { name: 'Light', color: '#eab308', icon: '💡' },
-  { name: 'Chemicals', color: '#ef4444', icon: '☣️' },
-  { name: 'Crowds', color: '#3b82f6', icon: '👥' },
-  { name: 'UV', color: '#f97316', icon: '☀️' },
-  { name: 'Air Quality', color: '#22c55e', icon: '🌿' },
-  { name: 'Temperature', color: '#14b8a6', icon: '🌡️' },
-  { name: 'Pollen', color: '#ec4899', icon: '🌸' },
+  { name: 'Noise', color: '#7c3aed', icon: 'volume-2' },
+  { name: 'Light', color: '#eab308', icon: 'sun' },
+  { name: 'Chemicals', color: '#ef4444', icon: 'alert-triangle' },
+  { name: 'Crowds', color: '#3b82f6', icon: 'users' },
+  { name: 'UV', color: '#f97316', icon: 'sun-medium' },
+  { name: 'Air Quality', color: '#22c55e', icon: 'wind' },
+  { name: 'Temperature', color: '#14b8a6', icon: 'thermometer' },
+  { name: 'Pollen', color: '#ec4899', icon: 'flower' },
 ];
 
 const ILLNESS_OPTIONS = [
@@ -75,6 +75,7 @@ const state = {
   isAuthenticated: false,
   sessionEmail: '',
   mapHintShown: false,
+  drawerOpen: false,
 };
 
 let map = null;
@@ -138,25 +139,43 @@ function navigate(view) {
 
 function setTab(tab) {
   state.appTab = tab;
+  state.drawerOpen = false;
   render();
+}
+
+function openDrawer() {
+  state.drawerOpen = true;
+  document.querySelector('.drawer')?.classList.add('open');
+  document.querySelector('.drawer-backdrop')?.classList.add('open');
+}
+
+function closeDrawer() {
+  if (!state.drawerOpen) return;
+  state.drawerOpen = false;
+  document.querySelector('.drawer')?.classList.remove('open');
+  document.querySelector('.drawer-backdrop')?.classList.remove('open');
 }
 
 function render() {
   const app = document.getElementById('app');
   if (state.currentView === 'landing') {
     app.innerHTML = landingHTML();
+    refreshIcons();
     return;
   }
   if (state.currentView === 'auth') {
     app.innerHTML = authHTML();
+    refreshIcons();
     return;
   }
   if (state.currentView === 'onboarding') {
     app.innerHTML = onboardingHTML();
+    refreshIcons();
     return;
   }
   app.innerHTML = shellHTML();
   renderMain();
+  refreshIcons();
 }
 
 function landingHTML() {
@@ -524,19 +543,38 @@ function showToast(message, duration = 2400) {
 }
 
 function shellHTML() {
+  const drawerTriggers = state.triggers.length
+    ? state.triggers.slice(0, 6).map((t) => `<li>${escapeHtml(t)}</li>`).join('')
+    : '<li class="subtle">No triggers added yet</li>';
+
   return `<section class="shell view">
+    <div class="drawer-backdrop ${state.drawerOpen ? 'open' : ''}" onclick="closeDrawer()"></div>
+    <aside class="drawer ${state.drawerOpen ? 'open' : ''}">
+      <div class="drawer-header">
+        <h3>Menu</h3>
+        <button class="icon" onclick="closeDrawer()">${icon('x', 20)}</button>
+      </div>
+      <button class="drawer-item" onclick="openProfileModal();closeDrawer();">${icon('user-round', 16)}<span>Profile</span></button>
+      <button class="drawer-item">${icon('map-pinned', 16)}<span>Saved Locations</span></button>
+      <div class="drawer-section">
+        <div class="drawer-title">User Triggers</div>
+        <ul class="drawer-list">${drawerTriggers}</ul>
+      </div>
+      <button class="drawer-item">${icon('settings', 16)}<span>Settings</span></button>
+    </aside>
+
     <header class="header">
-      <button class="icon" aria-label="menu">☰</button>
+      <button class="icon" aria-label="menu" onclick="openDrawer()">${icon('menu', 20)}</button>
       <h1>HUSH</h1>
-      <button class="icon" aria-label="profile" onclick="openProfileModal()">👤</button>
+      <button class="icon" aria-label="profile" onclick="openProfileModal()">${icon('circle-user-round', 20)}</button>
     </header>
 
     <main id="main" class="main"></main>
 
     <nav class="bottom-nav">
-      <button class="${state.appTab === 'logs' ? 'active' : ''}" onclick="setTab('logs')"><span class="nav-icon">📋</span>Logs</button>
-      <button class="${state.appTab === 'map' ? 'active' : ''}" onclick="setTab('map')"><span class="nav-icon">🗺️</span>Map</button>
-      <button class="${state.appTab === 'conditions' ? 'active' : ''}" onclick="setTab('conditions')"><span class="nav-icon">📊</span>Conditions</button>
+      <button class="${state.appTab === 'logs' ? 'active' : ''}" onclick="setTab('logs')"><span class="nav-icon">${icon('clipboard-list', 19)}</span>Logs</button>
+      <button class="${state.appTab === 'map' ? 'active' : ''}" onclick="setTab('map')"><span class="nav-icon">${icon('map', 19)}</span>Map</button>
+      <button class="${state.appTab === 'conditions' ? 'active' : ''}" onclick="setTab('conditions')"><span class="nav-icon">${icon('bar-chart-3', 19)}</span>Conditions</button>
     </nav>
   </section>`;
 }
@@ -557,19 +595,63 @@ function renderMain() {
 }
 
 function mapHTML() {
+  const preview = routePreviewHTML();
   return `<section class="map-wrap">
-    <div class="toolbar">
-      <input id="map-search" value="${escapeHtml(state.searchLocationText)}" placeholder="Enter destination" onkeydown="if(event.key==='Enter'){searchLocation();}">
-      <button class="btn primary" onclick="searchLocation()">🔍</button>
-      <button class="btn ghost" onclick="centerOnCurrentLocation()">📍 Locate Me</button>
-      <button class="btn ghost" onclick="startNavigation()">🧭 Navigate</button>
+    <div class="map-top-card">
+      <div class="search-main-row">
+        <input id="map-search" value="${escapeHtml(state.searchLocationText)}" placeholder="Search destination" onkeydown="if(event.key==='Enter'){searchLocation();}">
+        <button class="btn primary icon-btn" onclick="searchLocation()">${icon('search', 18)}</button>
+      </div>
+
+      <div class="nav-action-row">
+        <button class="btn ghost" onclick="centerOnCurrentLocation()">${icon('locate-fixed', 16)} <span>Locate Me</span></button>
+        <button class="btn primary" onclick="startNavigation()">${icon('navigation', 16)} <span>Start Navigation</span></button>
+      </div>
+
+      <div id="route-preview-slot">${preview}</div>
     </div>
+
     <div id="map"></div>
-    <div class="filters-panel">
-      <h3>Toggle Map Factors</h3>
-      <div class="pill-grid">${renderFactorPills()}</div>
-    </div>
+
+    <details class="filters-panel" open>
+      <summary>Environmental Filters</summary>
+      <div class="pill-grid" style="margin-top:10px;">${renderFactorPills()}</div>
+    </details>
   </section>`;
+}
+
+function updateRoutePreviewUI() {
+  const slot = document.getElementById('route-preview-slot');
+  if (!slot) return;
+  slot.innerHTML = routePreviewHTML();
+  refreshIcons();
+}
+
+function routePreviewHTML() {
+  if (!state.destinationLocation) return '';
+
+  const origin = state.currentLocation || BOSTON;
+  const km = haversineKm(origin.lat, origin.lng, state.destinationLocation.lat, state.destinationLocation.lng);
+  const minutes = Math.max(3, Math.round((km / 4.8) * 60));
+
+  return `<div class="route-preview">
+    <div>
+      <div class="route-title">Route preview</div>
+      <div class="route-subtle">${escapeHtml(state.destinationLocation.label || 'Destination selected')}</div>
+    </div>
+    <div class="route-meta">${km.toFixed(1)} km · ${minutes} min</div>
+  </div>`;
+}
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function logsHTML() {
@@ -604,7 +686,7 @@ function logsHTML() {
                 </article>`
               )
               .join('')
-          : '<div class="empty">No events match your search/filter yet.</div>'
+          : '<div class="empty"><strong>No events logged yet</strong><p class="subtle" style="margin-top:6px;">Log events from the map screen</p></div>'
       }
     </div>
   </section>`;
@@ -629,31 +711,31 @@ function conditionsHTML() {
   const cards = [
     {
       label: 'Temperature',
-      icon: '🌡️',
+      icon: 'thermometer',
       value: `${temp}°C`,
       text: temp > 30 ? 'Heat is high. Consider cooling measures.' : temp < 6 ? 'Cold stress is possible. Keep warm.' : 'Temperature is in a moderate range.',
     },
     {
       label: 'Noise',
-      icon: '🔊',
+      icon: 'volume-2',
       value: randomMetric('Noise'),
       text: 'City activity indicates moderate acoustic intensity.',
     },
     {
       label: 'Light',
-      icon: '💡',
+      icon: 'sun',
       value: randomMetric('Light'),
       text: 'Ambient light appears manageable in most blocks.',
     },
     {
       label: 'Chemicals',
-      icon: '☣️',
+      icon: 'alert-triangle',
       value: randomMetric('Chemicals'),
       text: 'No major anomaly detected. Avoid strong scent hotspots.',
     },
     {
       label: 'Crowds',
-      icon: '👥',
+      icon: 'users',
       value: randomMetric('Crowds'),
       text: 'Transit and venue zones may have denser crowd pockets.',
     },
@@ -662,6 +744,11 @@ function conditionsHTML() {
   return `<section class="conditions">
     <h2>Conditions</h2>
     <div class="subtle">Boston, MA · Updated ${escapeHtml(time)}</div>
+
+    <div class="card">
+      <div class="subtle" style="margin-bottom:8px;">Track Interests</div>
+      <div class="pill-grid">${renderFactorPills()}</div>
+    </div>
 
     <div class="stat-grid">
       <div class="stat score">
@@ -675,17 +762,12 @@ function conditionsHTML() {
       </div>
     </div>
 
-    <div class="card">
-      <div class="subtle" style="margin-bottom:8px;">Track Interests</div>
-      <div class="pill-grid">${renderFactorPills()}</div>
-    </div>
-
     <div class="cond-grid">
       ${cards
         .filter((c) => state.activeFilters.includes(c.label) || ['Noise', 'Light', 'Chemicals', 'Crowds'].includes(c.label))
         .map(
           (c) => `<article class="cond-card">
-            <div class="cond-icon">${c.icon}</div>
+            <div class="cond-icon">${icon(c.icon, 17)}</div>
             <div><strong>${c.label}</strong><p>${c.text}</p></div>
             <strong>${c.value}</strong>
           </article>`
@@ -698,7 +780,7 @@ function conditionsHTML() {
 function renderFactorPills() {
   return FACTORS.map((factor) => {
     const active = state.activeFilters.includes(factor.name);
-    return `<button class="pill ${active ? 'active' : ''}" data-factor="${factor.name}" onclick="toggleFactor('${factor.name}')">${factor.icon} ${factor.name}</button>`;
+    return `<button class="pill ${active ? 'active' : ''}" data-factor="${factor.name}" onclick="toggleFactor('${factor.name}')">${icon(factor.icon, 14)} ${factor.name}</button>`;
   }).join('');
 }
 
@@ -908,6 +990,7 @@ function drawMapOverlays() {
       weight: 1.5,
       fillColor: point.color,
       fillOpacity: 0.78,
+      className: 'map-factor-marker',
     })
       .bindPopup(`<strong>${point.factor}</strong><br>Intensity: ${point.value}`)
       .addTo(map);
@@ -963,6 +1046,7 @@ async function searchLocation() {
     await fetchRealtimeAreaEventsHeat(lat, lng);
     drawMapOverlays();
     drawNavigationOverlays();
+    updateRoutePreviewUI();
   } catch {
     showToast('Location search failed. Please try another query.', 3000);
   }
@@ -1113,10 +1197,12 @@ async function fetchRouteFromCurrentLocation() {
       distanceKm: route.distance / 1000,
       durationMin: route.duration / 60,
     };
+    updateRoutePreviewUI();
     showToast(`Route ready: ${state.routeInfo.distanceKm.toFixed(1)} km · ${Math.round(state.routeInfo.durationMin)} min`, 3500);
   } catch (error) {
     state.routeInfo = null;
     state.locationError = error?.message || 'Unable to build route.';
+    updateRoutePreviewUI();
     showToast(state.locationError, 3200);
   }
 }
@@ -1330,6 +1416,21 @@ function randomMetric(seed) {
   return Math.round((base + Date.now() / 1000) % 40 + 55);
 }
 
+function icon(name, size = 16) {
+  return `<i data-lucide="${name}" data-size="${size}"></i>`;
+}
+
+function refreshIcons() {
+  if (!window.lucide?.createIcons) return;
+  window.lucide.createIcons({
+    attrs: {
+      width: '1em',
+      height: '1em',
+      'stroke-width': '2',
+    },
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -1367,3 +1468,5 @@ window.closeEventModal = closeEventModal;
 window.submitMapEvent = submitMapEvent;
 window.deleteEvent = deleteEvent;
 window.fetchWeather = fetchWeather;
+window.openDrawer = openDrawer;
+window.closeDrawer = closeDrawer;
