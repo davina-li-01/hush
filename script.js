@@ -94,6 +94,10 @@ const state = {
   navManeuverModifier: 'straight',
   navManeuverType: 'depart',
   navUserDeviated: false,
+  favorites: [],
+  logShowFavoritesOnly: false,
+  logDataError: '',
+  apiErrorBanner: '',
   liveCityEvents: [],
   liveCityEventsStatus: 'idle',
 };
@@ -121,6 +125,8 @@ function saveState() {
     logSearch: state.logSearch,
     logFilter: state.logFilter,
     logSort: state.logSort,
+    logShowFavoritesOnly: state.logShowFavoritesOnly,
+    favorites: state.favorites,
     mapHintShown: state.mapHintShown,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -138,6 +144,8 @@ function loadState() {
     state.logSearch = saved.logSearch || '';
     state.logFilter = saved.logFilter || 'All';
     state.logSort = saved.logSort || 'newest';
+    state.logShowFavoritesOnly = Boolean(saved.logShowFavoritesOnly);
+    state.favorites = Array.isArray(saved.favorites) ? saved.favorites : [];
     state.mapHintShown = Boolean(saved.mapHintShown);
   } catch {}
 }
@@ -517,6 +525,8 @@ function openProfileModal() {
       <div>${state.illnesses.length}</div>
       <div class="subtle" style="margin-top:10px;">Logged events</div>
       <div>${state.events.length}</div>
+      <div class="subtle" style="margin-top:10px;">Saved locations</div>
+      <div>${state.favorites.length}</div>
     </div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal()">Close</button>
@@ -600,7 +610,10 @@ function mapHTML() {
 
       <div class="nav-action-row">
         <button class="btn ghost" onclick="centerOnCurrentLocation()">${icon('locate-fixed', 16)} <span>My Location</span></button>
-        <button class="btn ghost" onclick="searchLocation()">${icon('search', 16)} <span>Search</span></button>
+        ${state.destinationLocation
+          ? `<button class="btn ghost" onclick="saveCurrentLocation()" aria-label="Save this location">${icon('bookmark-plus', 16)} <span>Save</span></button>`
+          : `<button class="btn ghost" onclick="searchLocation()" aria-label="Search">${icon('search', 16)} <span>Search</span></button>`
+        }
       </div>
 
         <div id="city-events-slot">${liveCityEventsHTML()}</div>
@@ -697,7 +710,10 @@ function navigationOverlayHTML() {
 }
 
 function destinationSuggestionsHTML() {
-  if (!state.destinationSuggestionsOpen || !state.destinationSuggestions.length) return '';
+  if (!state.destinationSuggestionsOpen) return '';
+  if (!state.destinationSuggestions.length) {
+    return `<div class="search-no-results">${icon('search-x', 15)} No results found. Try a different location.</div>`;
+  }
   return `<div class="search-suggestions">
     ${state.destinationSuggestions
       .map(
@@ -751,7 +767,7 @@ async function fetchDestinationSuggestions(query) {
           label: item.display_name,
         }))
       : [];
-    state.destinationSuggestionsOpen = state.destinationSuggestions.length > 0;
+    state.destinationSuggestionsOpen = true; // open even if empty to show no-results
     updateDestinationSuggestionsUI();
   } catch {
     clearDestinationSuggestions();
@@ -837,6 +853,101 @@ function routePreviewHTML() {
   </div>`;
 }
 
+// ── FAVORITES ──────────────────────────────────────────────────────
+function saveCurrentLocation() {
+  if (!state.destinationLocation) {
+    showToast('Search and select a destination first.', 2500);
+    return;
+  }
+  const { lat, lng, label } = state.destinationLocation;
+  const name = label || 'Saved Location';
+  const exists = state.favorites.some((f) => Math.abs(f.lat - lat) < 0.0001 && Math.abs(f.lng - lng) < 0.0001);
+  if (exists) {
+    showToast('Already saved!', 1800);
+    return;
+  }
+  state.favorites.push({ name, lat, lng, savedAt: Date.now() });
+  saveState();
+  // update save button UI
+  const btn = document.querySelector('.nav-action-row .btn.ghost:last-child');
+  if (btn) { btn.innerHTML = `${icon('bookmark-check', 16)} <span>Saved!</span>`; refreshIcons(); }
+  showToast(`Saved: ${name.slice(0, 40)}`, 2200);
+}
+
+function removeFavorite(idx) {
+  state.favorites.splice(idx, 1);
+  saveState();
+  render();
+}
+
+function loadFavorite(idx) {
+  const fav = state.favorites[idx];
+  if (!fav) return;
+  state.destinationLocation = { lat: fav.lat, lng: fav.lng, label: fav.name };
+  state.searchLocationText = fav.name;
+  state.appTab = 'map';
+  render(); // re-renders map tab
+  showToast(`Loading: ${fav.name.slice(0, 40)}`, 1800);
+}
+
+// ── STARRED EVENTS ──────────────────────────────────────────────────
+function toggleEventStar(id) {
+  const ev = state.events.find((e) => e.id === id);
+  if (!ev) return;
+  ev.starred = !ev.starred;
+  saveState();
+  // Patch just the star button without full re-render
+  const btn = document.querySelector(`[data-star="${id}"]`);
+  if (btn) {
+    btn.innerHTML = icon('star', 16);
+    btn.classList.toggle('starred', ev.starred);
+    refreshIcons();
+  }
+}
+
+function toggleFavoritesFilter() {
+  state.logShowFavoritesOnly = !state.logShowFavoritesOnly;
+  saveState();
+  render();
+}
+
+// ── EVENT DETAIL MODAL ─────────────────────────────────────────────
+function openEventDetail(id) {
+  const ev = state.events.find((e) => e.id === id);
+  if (!ev) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="modal">
+    <h3>${escapeHtml(ev.trigger)}</h3>
+    <div class="card" style="padding:12px;display:grid;gap:8px;">
+      ${ev.factor ? `<div><div class="subtle">Factor</div><div style="font-weight:600;">${escapeHtml(ev.factor)}</div></div>` : ''}
+      <div><div class="subtle">Time</div><div>${new Date(ev.timestamp).toLocaleString()}</div></div>
+      ${ev.lat != null ? `<div><div class="subtle">Location</div><div style="font-family:monospace;font-size:12px;">${ev.lat.toFixed(5)}, ${ev.lng.toFixed(5)}</div></div>` : ''}
+      ${ev.note ? `<div><div class="subtle">Note</div><div>${escapeHtml(ev.note)}</div></div>` : ''}
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Close</button>
+      <button class="btn primary" style="background:#ef4444;border-color:#ef4444;" onclick="deleteEvent('${ev.id}');closeModal();">${icon('trash-2', 14)} Delete</button>
+    </div>
+  </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  document.body.appendChild(overlay);
+  refreshIcons();
+}
+
+// ── API ERROR BANNER ───────────────────────────────────────────────
+function showApiErrorBanner(message) {
+  const existing = document.getElementById('api-error-banner');
+  if (existing) existing.remove();
+  const banner = document.createElement('div');
+  banner.id = 'api-error-banner';
+  banner.className = 'api-error-banner';
+  banner.innerHTML = `${icon('wifi-off', 14)} ${escapeHtml(message)} <button onclick="this.parentElement.remove()" aria-label="Dismiss">${icon('x', 13)}</button>`;
+  document.body.appendChild(banner);
+  refreshIcons();
+  setTimeout(() => banner?.remove(), 5000);
+}
+
 function clearDestination() {
   state.destinationLocation = null;
   state.searchLocationText = '';
@@ -860,16 +971,51 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 function logsHTML() {
   const filtered = getFilteredEvents();
+
+  // Saved Favorites section
+  const favSection = state.favorites.length ? `
+    <div class="logs-section-head">
+      ${icon('bookmark', 15)} Saved Locations
+      <span class="logs-count">${state.favorites.length}</span>
+    </div>
+    <div class="fav-list">
+      ${state.favorites.map((fav, idx) => `
+        <div class="fav-item">
+          <button class="fav-load" onclick="loadFavorite(${idx})" aria-label="Load ${escapeHtml(fav.name)}">
+            <span class="fav-icon">${icon('map-pin', 14)}</span>
+            <span class="fav-label">${escapeHtml(fav.name.length > 36 ? fav.name.slice(0, 34) + '\u2026' : fav.name)}</span>
+          </button>
+          <button class="fav-remove x" onclick="removeFavorite(${idx})" aria-label="Remove favorite">✕</button>
+        </div>`).join('')}
+    </div>` : '';
+
+  const emptyState = `<div class="empty">
+    <div>${icon('clipboard-list', 32)}</div>
+    <strong style="margin-top:8px;display:block;">No events logged yet</strong>
+    <p class="subtle" style="margin-top:6px;">Head to the Map tab and tap anywhere to log your first event</p>
+    <button class="btn primary" style="margin-top:14px;" onclick="setTab('map')">${icon('map', 15)} Go to Map</button>
+  </div>`;
+
   return `<section class="logs">
     <h2>Logged Events</h2>
 
+    ${favSection}
+
+    <div class="logs-section-head">
+      ${icon('list', 15)} Events
+      <span class="logs-count">${filtered.length}</span>
+      <button class="btn-fav-filter ${state.logShowFavoritesOnly ? 'active' : ''}" onclick="toggleFavoritesFilter()" aria-label="Show favorites only">
+        ${icon('star', 14)} Starred
+      </button>
+    </div>
+
     <div class="search-row">
-      <input class="input" placeholder="Search events" value="${escapeHtml(state.logSearch)}" oninput="state.logSearch=this.value;saveState();render();">
-      <select onchange="state.logFilter=this.value;saveState();render();">
+      <input class="input" aria-label="Search events" placeholder="Search events" value="${escapeHtml(state.logSearch)}" oninput="state.logSearch=this.value;saveState();render();">
+      <select aria-label="Filter by factor" onchange="state.logFilter=this.value;saveState();render();">
         <option ${state.logFilter === 'All' ? 'selected' : ''}>All</option>
         ${FACTORS.map((f) => `<option ${state.logFilter === f.name ? 'selected' : ''}>${f.name}</option>`).join('')}
       </select>
-      <select onchange="state.logSort=this.value;saveState();render();">
+      <select aria-label="Sort order" onchange="state.logSort=this.value;saveState();render();">
         <option value="newest" ${state.logSort === 'newest' ? 'selected' : ''}>Newest</option>
         <option value="oldest" ${state.logSort === 'oldest' ? 'selected' : ''}>Oldest</option>
       </select>
@@ -880,17 +1026,20 @@ function logsHTML() {
         filtered.length
           ? filtered
               .map(
-                (ev) => `<article class="event">
-                  <div>
+                (ev) => `<article class="event" role="button" tabindex="0" onclick="openEventDetail('${ev.id}')" onkeydown="if(event.key==='Enter')openEventDetail('${ev.id}')">
+                  <div class="event-main">
                     <strong>${escapeHtml(ev.trigger)}</strong>
                     <small>${new Date(ev.timestamp).toLocaleString()}</small>
-                    <div class="coord">${ev.factor ? `${escapeHtml(ev.factor)} · ` : ''}${ev.lat?.toFixed(4)}, ${ev.lng?.toFixed(4)}</div>
+                    <div class="coord">${ev.factor ? `${escapeHtml(ev.factor)} · ` : ''}${ev.lat?.toFixed(4) ?? ''}, ${ev.lng?.toFixed(4) ?? ''}</div>
                   </div>
-                  <button class="x" onclick="deleteEvent('${ev.id}')">✕</button>
+                  <div class="event-actions">
+                    <button class="event-star ${ev.starred ? 'starred' : ''}" data-star="${ev.id}" onclick="event.stopPropagation();toggleEventStar('${ev.id}')" aria-label="${ev.starred ? 'Unstar' : 'Star'} event">${icon('star', 16)}</button>
+                    <button class="x" onclick="event.stopPropagation();deleteEvent('${ev.id}')" aria-label="Delete event">✕</button>
+                  </div>
                 </article>`
               )
               .join('')
-          : '<div class="empty"><strong>No events logged yet</strong><p class="subtle" style="margin-top:6px;">Log events from the map screen</p></div>'
+          : emptyState
       }
     </div>
   </section>`;
@@ -898,7 +1047,13 @@ function logsHTML() {
 
 function conditionsHTML() {
   if (state.weatherStatus === 'loading') {
-    return `<section class="conditions"><h2>Conditions</h2><div class="loading"><span class="spinner"></span><span>Loading...</span></div></section>`;
+    return `<section class="conditions"><h2>Conditions</h2>
+      <div class="loading"><span class="spinner"></span><span>Loading environmental data…</span></div>
+      <div class="skeleton-grid">
+        <div class="skeleton-card"></div><div class="skeleton-card"></div>
+        <div class="skeleton-card tall"></div><div class="skeleton-card tall"></div>
+      </div>
+    </section>`;
   }
 
   if (state.weatherStatus === 'error') {
@@ -1113,6 +1268,7 @@ function getFilteredEvents() {
     );
   }
   if (state.logFilter !== 'All') out = out.filter((ev) => ev.factor === state.logFilter);
+  if (state.logShowFavoritesOnly) out = out.filter((ev) => ev.starred);
   out.sort((a, b) => (state.logSort === 'newest' ? b.timestamp - a.timestamp : a.timestamp - b.timestamp));
   return out;
 }
@@ -1628,6 +1784,7 @@ async function fetchWeather() {
   } catch (err) {
     state.weatherStatus = 'error';
     state.weatherError = err?.message || 'Failed to load weather data.';
+    showApiErrorBanner('Weather data temporarily unavailable');
   }
 
   if (state.appTab === 'conditions') renderMain();
@@ -1895,3 +2052,9 @@ window.closeEventModal = closeEventModal;
 window.submitMapEvent = submitMapEvent;
 window.deleteEvent = deleteEvent;
 window.fetchWeather = fetchWeather;
+window.saveCurrentLocation = saveCurrentLocation;
+window.removeFavorite = removeFavorite;
+window.loadFavorite = loadFavorite;
+window.toggleEventStar = toggleEventStar;
+window.toggleFavoritesFilter = toggleFavoritesFilter;
+window.openEventDetail = openEventDetail;

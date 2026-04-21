@@ -790,6 +790,162 @@ input:disabled {
   padding: 12px;
 }
 
+/* ── Micro-interactions ─────────────────────────────────────── */
+button:active:not(:disabled) { transform: scale(0.97); }
+.btn { transition: background .15s, box-shadow .15s, transform .1s; }
+.event { transition: background .15s, box-shadow .15s; cursor: pointer; }
+.event:hover { background: rgba(255,255,255,0.12); box-shadow: 0 2px 12px rgba(0,0,0,0.18); }
+.cond-card { transition: box-shadow .15s; }
+.cond-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.22); }
+.pill { transition: background .14s, color .14s, transform .1s; }
+.pill:active { transform: scale(0.96); }
+.search-no-results {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.04);
+}
+
+/* ── Favorites ─────────────────────────────────────────────── */
+.fav-list { display: grid; gap: 6px; margin-bottom: 4px; }
+.fav-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.fav-load {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  text-align: left;
+  min-height: 46px;
+}
+.fav-load:hover { background: rgba(139,92,246,0.18); }
+.fav-icon { flex-shrink: 0; color: var(--primary); }
+.fav-label { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-remove { padding: 0 14px; min-height: 46px; border: 0; border-left: 1px solid var(--border); border-radius: 0; background: transparent; }
+
+/* ── Logs section header ───────────────────────────────────── */
+.logs-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.logs-count {
+  background: rgba(139,92,246,0.25);
+  color: var(--primary-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-right: auto;
+}
+.btn-fav-filter {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+}
+.btn-fav-filter.active {
+  background: rgba(234,179,8,0.2);
+  border-color: rgba(234,179,8,0.5);
+  color: #fde68a;
+}
+
+/* ── Event starred state ───────────────────────────────────── */
+.event { grid-template-columns: 1fr auto; }
+.event-main { display: grid; gap: 2px; }
+.event-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.event-star {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px;
+  display: grid;
+  place-items: center;
+}
+.event-star.starred { color: #facc15; }
+
+/* ── API error banner ──────────────────────────────────────── */
+.api-error-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  background: rgba(23, 18, 40, 0.96);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fecaca;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  animation: slideDown .22s ease;
+  white-space: nowrap;
+}
+.api-error-banner button {
+  border: 0;
+  background: transparent;
+  color: #fecaca;
+  padding: 0 2px;
+  display: grid;
+  place-items: center;
+}
+
+/* Skeleton loading */
+.skeleton-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.skeleton-card {
+  height: 72px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.06) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+.skeleton-card.tall { height: 110px; }
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.rps-calculating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  color: #555;
+  font-weight: 600;
+}
+.rps-calculating i { animation: spin .8s linear infinite; }
+
 /* Modal */
 .overlay {
   position: fixed;
