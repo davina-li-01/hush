@@ -83,7 +83,6 @@ const state = {
   isAuthenticated: false,
   sessionEmail: '',
   mapHintShown: false,
-  drawerOpen: false,
   navigationActive: false,
   navigationEtaTs: null,
   destinationSuggestions: [],
@@ -91,6 +90,12 @@ const state = {
   navInstruction: '',
   navStepDistanceM: null,
   navSpeedKmh: 0,
+  navSheetExpanded: false,
+  navManeuverModifier: 'straight',
+  navManeuverType: 'depart',
+  navUserDeviated: false,
+  liveCityEvents: [],
+  liveCityEventsStatus: 'idle',
 };
 
 let map = null;
@@ -158,26 +163,7 @@ function navigate(view) {
 
 function setTab(tab) {
   state.appTab = tab;
-  state.drawerOpen = false;
   render();
-}
-
-function openDrawer() {
-  state.drawerOpen = true;
-  const drawer = document.querySelector('.drawer');
-  const backdrop = document.querySelector('.drawer-backdrop');
-  if (!drawer || !backdrop) return;
-  drawer.classList.add('open');
-  backdrop.classList.add('open');
-}
-
-function closeDrawer() {
-  state.drawerOpen = false;
-  const drawer = document.querySelector('.drawer');
-  const backdrop = document.querySelector('.drawer-backdrop');
-  if (!drawer || !backdrop) return;
-  drawer.classList.remove('open');
-  backdrop.classList.remove('open');
 }
 
 function render() {
@@ -225,7 +211,8 @@ function beginExperience() {
 
 function authHTML() {
   const isSignIn = state.authMode === 'signin';
-  return `<section class="onboarding view">
+  return `<section class="auth-screen view">
+    <div class="auth-panel">
     <div class="card">
       <h2>${isSignIn ? 'Sign in to Hush' : 'Create your Hush account'}</h2>
       <p class="subtle">Secure local session. Your onboarding stays linked to your profile on this device.</p>
@@ -259,6 +246,7 @@ function authHTML() {
     <div class="onboarding-actions">
       <button class="btn ghost" onclick="navigate('landing')">Back</button>
       <button class="btn primary" ${state.authLoading ? 'disabled' : ''} onclick="submitAuth()">${state.authLoading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}</button>
+    </div>
     </div>
   </section>`;
 }
@@ -567,28 +555,9 @@ function showToast(message, duration = 2400) {
 }
 
 function shellHTML() {
-  const drawerTriggers = state.triggers.length
-    ? state.triggers.slice(0, 6).map((t) => `<li>${escapeHtml(t)}</li>`).join('')
-    : '<li class="subtle">No triggers added yet</li>';
-
   return `<section class="shell view">
-    <div class="drawer-backdrop" onclick="closeDrawer()"></div>
-    <aside class="drawer">
-      <div class="drawer-header">
-        <h3>Menu</h3>
-        <button class="icon" onclick="closeDrawer()">${icon('x', 20)}</button>
-      </div>
-      <button class="drawer-item" onclick="openProfileModal();closeDrawer();">${icon('user-round', 16)}<span>Profile</span></button>
-      <button class="drawer-item">${icon('map-pinned', 16)}<span>Saved Locations</span></button>
-      <div class="drawer-section">
-        <div class="drawer-title">User Triggers</div>
-        <ul class="drawer-list">${drawerTriggers}</ul>
-      </div>
-      <button class="drawer-item">${icon('settings', 16)}<span>Settings</span></button>
-    </aside>
-
     <header class="header">
-      <button class="icon" aria-label="menu" onclick="openDrawer()">${icon('menu', 20)}</button>
+      <div class="icon-spacer" aria-hidden="true"></div>
       <h1>HUSH</h1>
       <button class="icon" aria-label="profile" onclick="openProfileModal()">${icon('circle-user-round', 20)}</button>
     </header>
@@ -630,16 +599,17 @@ function mapHTML() {
       <div id="destination-suggestions-slot">${destinationSuggestionsHTML()}</div>
 
       <div class="nav-action-row">
-        <button class="btn ghost" onclick="centerOnCurrentLocation()">${icon('locate-fixed', 16)} <span>Locate Me</span></button>
-        <button class="btn primary" onclick="startNavigation()">${icon('navigation', 16)} <span>Start Navigation</span></button>
+        <button class="btn ghost" onclick="centerOnCurrentLocation()">${icon('locate-fixed', 16)} <span>My Location</span></button>
+        <button class="btn ghost" onclick="searchLocation()">${icon('search', 16)} <span>Search</span></button>
       </div>
 
-      <div id="route-preview-slot">${preview}</div>
+        <div id="city-events-slot">${liveCityEventsHTML()}</div>
     </div>
 
     <div class="map-stage">
       <div id="map"></div>
       <div id="nav-overlay-slot">${navigationOverlayHTML()}</div>
+      <div id="route-preview-slot">${preview}</div>
     </div>
 
     <details class="filters-panel" open>
@@ -649,29 +619,81 @@ function mapHTML() {
   </section>`;
 }
 
-function navigationOverlayHTML() {
-  if (!state.navigationActive || !state.routeInfo) return '';
-  const arrival = state.navigationEtaTs ? new Date(state.navigationEtaTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
-  const instruction = state.navInstruction || 'Continue straight';
-  const nextStepKm = state.navStepDistanceM ? `${(state.navStepDistanceM / 1000).toFixed(1)} km` : '--';
-  return `<div class="nav-overlay-card">
-    <div class="nav-overlay-top">
-      <div>
-        <div class="subtle">Navigation active</div>
-        <strong>${escapeHtml(instruction)}</strong>
-        <div class="subtle">to ${escapeHtml(state.destinationLocation?.label || 'Destination')}</div>
-      </div>
-      <button class="btn ghost nav-end-btn" onclick="endNavigation()">${icon('square', 14)} End</button>
-    </div>
-    <div class="nav-overlay-stats">
-      <div><span>Arrival</span><strong>${arrival}</strong></div>
-      <div><span>Next Step</span><strong>${nextStepKm}</strong></div>
-      <div><span>Distance</span><strong>${state.routeInfo.distanceKm.toFixed(1)} km</strong></div>
-      <div><span>Speed</span><strong>${Math.round(state.navSpeedKmh)} km/h</strong></div>
-      <div><span>Duration</span><strong>${Math.max(1, Math.round(state.routeInfo.durationMin))} min</strong></div>
-      <div><span>Mode</span><strong>Live</strong></div>
-    </div>
+function liveCityEventsHTML() {
+  if (state.liveCityEventsStatus === 'loading') {
+    return `<div class="city-events-feed"><div class="city-event-chip">Checking live Boston events…</div></div>`;
+  }
+  if (!state.liveCityEvents.length) return '';
+  return `<div class="city-events-feed">
+    ${state.liveCityEvents
+      .slice(0, 3)
+      .map(
+        (ev) => `<div class="city-event-chip ${ev.severity === 'high' ? 'high' : ''}">${icon('activity', 13)} ${escapeHtml(ev.title)} · ${escapeHtml(ev.status)}</div>`
+      )
+      .join('')}
   </div>`;
+}
+
+function updateCityEventsUI() {
+  const slot = document.getElementById('city-events-slot');
+  if (!slot) return;
+  slot.innerHTML = liveCityEventsHTML();
+  refreshIcons();
+}
+
+function navTurnIcon(type, modifier) {
+  if (type === 'arrive') return icon('map-pin', 22);
+  if (type === 'depart') return icon('navigation', 22);
+  const mod = (modifier || '').toLowerCase();
+  if (mod.includes('sharp left') || mod === 'uturn') return icon('corner-down-left', 22);
+  if (mod.includes('sharp right')) return icon('corner-down-right', 22);
+  if (mod.includes('left')) return icon('corner-up-left', 22);
+  if (mod.includes('right')) return icon('corner-up-right', 22);
+  return icon('arrow-up', 22);
+}
+
+function navigationOverlayHTML() {
+  if (!state.navigationActive) return '';
+  if (!state.routeInfo) {
+    return `<div class="nav-banner nav-banner-loading">${icon('loader', 18)} Calculating route\u2026</div>`;
+  }
+  const arrival = state.navigationEtaTs ? new Date(state.navigationEtaTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
+  const totalMins = Math.max(1, Math.round(state.routeInfo.durationMin));
+  const timeLabel = totalMins >= 60 ? `${Math.floor(totalMins/60)}h ${totalMins%60}m` : `${totalMins} min`;
+  const miles = (state.routeInfo.distanceKm * 0.621371).toFixed(1);
+  const instruction = state.navInstruction || 'Continue straight';
+  const stepDist = state.navStepDistanceM != null
+    ? (state.navStepDistanceM >= 1000 ? `${(state.navStepDistanceM/1000).toFixed(1)} km` : `${Math.round(state.navStepDistanceM)} m`)
+    : '';
+  const turnIcon = navTurnIcon(state.navManeuverType, state.navManeuverModifier);
+
+  return `
+    <div class="nav-banner">
+      <div class="nav-banner-turn">${turnIcon}</div>
+      <div class="nav-banner-text">
+        <div class="nav-banner-instruction">${escapeHtml(instruction)}</div>
+        ${stepDist ? `<div class="nav-banner-dist">${stepDist}</div>` : ''}
+      </div>
+      ${state.navUserDeviated ? `<div class="nav-banner-badge">${icon('refresh-cw', 13)} Rerouting</div>` : ''}
+    </div>
+
+    <button class="nav-recenter-fab" onclick="recenterMap()" aria-label="Re-center">${icon('locate-fixed', 20)}</button>
+
+    <div class="nav-eta-bar">
+      <div class="nav-eta-left">
+        <div class="nav-eta-time">${timeLabel}</div>
+        <div class="nav-eta-label">remaining</div>
+      </div>
+      <div class="nav-eta-center">
+        <div class="nav-eta-time">${arrival}</div>
+        <div class="nav-eta-label">arrival</div>
+      </div>
+      <div class="nav-eta-right">
+        <div class="nav-eta-time">${miles} mi</div>
+        <div class="nav-eta-label">distance</div>
+      </div>
+      <button class="nav-end-btn" onclick="endNavigation()">${icon('x', 16)}</button>
+    </div>`;
 }
 
 function destinationSuggestionsHTML() {
@@ -752,6 +774,8 @@ async function selectDestinationSuggestion(index) {
     fetchRealtimeAreaEventsHeat(item.lat, item.lng).finally(() => drawMapOverlays());
     drawNavigationOverlays();
     updateRoutePreviewUI();
+    // Auto-fetch route to show polyline and real time/distance in preview sheet
+    fetchRouteFromCurrentLocation(true);
   }
   clearDestinationSuggestions();
 }
@@ -770,20 +794,57 @@ function updateNavigationOverlayUI() {
   refreshIcons();
 }
 
+function toggleNavSheet() {
+  state.navSheetExpanded = !state.navSheetExpanded;
+  updateNavigationOverlayUI();
+}
+
+function applyNavigationVisualState() {
+  const wrap = document.querySelector('.map-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('nav-mode', state.navigationActive);
+}
+
 function routePreviewHTML() {
-  if (!state.destinationLocation) return '';
+  if (state.navigationActive || !state.destinationLocation) return '';
 
-  const origin = state.currentLocation || BOSTON;
-  const km = haversineKm(origin.lat, origin.lng, state.destinationLocation.lat, state.destinationLocation.lng);
-  const minutes = Math.max(3, Math.round((km / 4.8) * 60));
+  let mins, km, miles;
+  if (state.routeInfo) {
+    mins = Math.max(1, Math.round(state.routeInfo.durationMin));
+    km = state.routeInfo.distanceKm.toFixed(1);
+    miles = (state.routeInfo.distanceKm * 0.621371).toFixed(1);
+  } else {
+    const origin = state.currentLocation || BOSTON;
+    const rawKm = haversineKm(origin.lat, origin.lng, state.destinationLocation.lat, state.destinationLocation.lng);
+    mins = Math.max(3, Math.round((rawKm / 4.8) * 60));
+    km = rawKm.toFixed(1);
+    miles = (rawKm * 0.621371).toFixed(1);
+  }
 
-  return `<div class="route-preview">
-    <div>
-      <div class="route-title">Route preview</div>
-      <div class="route-subtle">${escapeHtml(state.destinationLocation.label || 'Destination selected')}</div>
+  const label = state.destinationLocation.label || 'Destination';
+  const shortLabel = label.length > 38 ? label.slice(0, 36) + '…' : label;
+
+  return `<div class="route-preview-sheet">
+    <div class="rps-handle"><span></span></div>
+    <div class="rps-info">
+      <div class="rps-time-dist">${mins} min <span class="rps-dist-text">(${miles} mi · ${km} km)</span></div>
+      <div class="rps-via">via ${escapeHtml(shortLabel)}</div>
     </div>
-    <div class="route-meta">${km.toFixed(1)} km · ${minutes} min</div>
+    <div class="rps-actions">
+      <button class="btn ghost rps-cancel" onclick="clearDestination()">${icon('x', 15)} Cancel</button>
+      <button class="btn primary rps-start" onclick="startNavigation()">${icon('navigation', 15)} Start</button>
+    </div>
   </div>`;
+}
+
+function clearDestination() {
+  state.destinationLocation = null;
+  state.searchLocationText = '';
+  if (routePolyline && map) { map.removeLayer(routePolyline); routePolyline = null; }
+  state.routeInfo = null;
+  const input = document.getElementById('map-search');
+  if (input) input.value = '';
+  updateRoutePreviewUI();
 }
 
 function haversineKm(lat1, lon1, lat2, lon2) {
@@ -1104,15 +1165,17 @@ function initMapView() {
     state.mapData = buildMockFactorData(BOSTON.lat, BOSTON.lng);
 
     try {
-      await Promise.all([fetchWeather(), fetchRealtimeAreaEventsHeat()]);
+      await Promise.all([fetchWeather(), fetchRealtimeAreaEventsHeat(), fetchLiveCityEventsSignals()]);
     } catch {}
 
     drawMapOverlays();
     setTimeout(() => map?.invalidateSize(), 150);
     await centerOnCurrentLocation(true);
     ensureLiveLocationWatch();
+    applyNavigationVisualState();
     updateNavigationOverlayUI();
     updateRoutePreviewUI();
+    updateCityEventsUI();
 
     if (!state.mapHintShown) {
       showToast('Tip: Tap anywhere on the map to add an event in that location.', 3500);
@@ -1198,11 +1261,17 @@ async function searchLocation() {
     map.setView([lat, lng], 13);
     state.mapData = buildMockFactorData(lat, lng);
     await fetchRealtimeAreaEventsHeat(lat, lng);
+    await fetchLiveCityEventsSignals(lat, lng);
     drawMapOverlays();
     drawNavigationOverlays();
     updateRoutePreviewUI();
+    updateCityEventsUI();
     if (state.navigationActive) {
+      state.navUserDeviated = true;
+      updateNavigationOverlayUI();
       await fetchRouteFromCurrentLocation(true);
+      state.navUserDeviated = false;
+      updateNavigationOverlayUI();
     } else {
       updateNavigationOverlayUI();
     }
@@ -1285,7 +1354,10 @@ async function maybeUpdateLiveNavigation() {
     : Infinity;
 
   if (now - lastRerouteAt > 12000 || movedKm > 0.08) {
+    state.navUserDeviated = movedKm > 0.08;
+    updateNavigationOverlayUI();
     await fetchRouteFromCurrentLocation(true);
+    state.navUserDeviated = false;
     lastRerouteAt = now;
     lastRerouteFrom = { ...state.currentLocation };
   }
@@ -1344,14 +1416,23 @@ function followUserPOV() {
     return;
   }
 
-  const targetZoom = Math.max(16, map.getZoom());
+  const targetZoom = Math.max(17, map.getZoom());
   const point = map.project([state.currentLocation.lat, state.currentLocation.lng], targetZoom);
-  const offsetPoint = L.point(point.x, point.y + 140);
+  const offsetPoint = L.point(point.x, point.y + 160);
   const shifted = map.unproject(offsetPoint, targetZoom);
   map.setView([shifted.lat, shifted.lng], targetZoom, {
     animate: true,
-    duration: 0.55,
+    duration: 0.6,
   });
+}
+
+function recenterMap() {
+  if (!map || !state.currentLocation) return;
+  if (state.navigationActive) {
+    followUserPOV();
+  } else {
+    map.setView([state.currentLocation.lat, state.currentLocation.lng], map.getZoom(), { animate: true, duration: 0.4 });
+  }
 }
 
 async function startNavigation() {
@@ -1374,8 +1455,10 @@ async function startNavigation() {
   }
 
   state.navigationActive = true;
-  applyMapStyle('nav');
-  if (map) map.setZoom(Math.max(16, map.getZoom()));
+  state.navSheetExpanded = false;
+  state.navUserDeviated = false;
+  applyNavigationVisualState();
+  if (map) map.setZoom(17);
   await fetchRouteFromCurrentLocation();
   followUserPOV();
   updateNavigationOverlayUI();
@@ -1386,7 +1469,9 @@ function endNavigation() {
   state.navigationEtaTs = null;
   state.navInstruction = '';
   state.navStepDistanceM = null;
-  applyMapStyle('day');
+  state.navSheetExpanded = false;
+  state.navUserDeviated = false;
+  applyNavigationVisualState();
   if (routePolyline && map) {
     map.removeLayer(routePolyline);
     routePolyline = null;
@@ -1424,7 +1509,7 @@ async function fetchRouteFromCurrentLocation(silent = false) {
     }).addTo(map);
 
     if (!state.navigationActive) {
-      map.fitBounds(routePolyline.getBounds(), { padding: [22, 22] });
+      map.fitBounds(routePolyline.getBounds(), { padding: [60, 20], paddingBottomRight: [20, 160] });
     }
 
     state.routeInfo = {
@@ -1434,6 +1519,8 @@ async function fetchRouteFromCurrentLocation(silent = false) {
     state.navigationEtaTs = Date.now() + route.duration * 1000;
     state.navInstruction = firstStep?.maneuver?.instruction || 'Continue to destination';
     state.navStepDistanceM = firstStep?.distance || null;
+    state.navManeuverModifier = firstStep?.maneuver?.modifier || 'straight';
+    state.navManeuverType = firstStep?.maneuver?.type || 'depart';
     updateRoutePreviewUI();
     updateNavigationOverlayUI();
     if (!silent) {
@@ -1544,6 +1631,86 @@ async function fetchWeather() {
   }
 
   if (state.appTab === 'conditions') renderMain();
+}
+
+function getThirdMondayOfApril(year) {
+  const d = new Date(year, 3, 1);
+  while (d.getDay() !== 1) d.setDate(d.getDate() + 1);
+  d.setDate(d.getDate() + 14);
+  return d;
+}
+
+function isSameCalendarDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+async function fetchLiveCityEventsSignals(lat = BOSTON.lat, lng = BOSTON.lng) {
+  state.liveCityEventsStatus = 'loading';
+  updateCityEventsUI();
+
+  const events = [];
+  const year = new Date().getFullYear();
+
+  // API 1: Wikipedia event summary for Boston Marathon.
+  try {
+    const marathonRes = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${year}_Boston_Marathon`);
+    const marathonData = marathonRes.ok ? await marathonRes.json() : null;
+
+    const marathonDate = getThirdMondayOfApril(year);
+    const today = new Date();
+    const isMarathonDay = isSameCalendarDay(today, marathonDate);
+    const hasYearPage = Boolean(marathonData?.extract);
+
+    if (isMarathonDay || hasYearPage) {
+      events.push({
+        title: 'Boston Marathon',
+        status: isMarathonDay ? 'Likely active today' : 'Season signal detected',
+        severity: 'high',
+      });
+
+      const marathonRoute = [
+        [42.3497, -71.2627],
+        [42.3159, -71.1755],
+        [42.3325, -71.1094],
+        [42.3447, -71.0828],
+        [42.3476, -71.0736],
+      ];
+
+      state.mapData = state.mapData.filter((p) => p.source !== 'Boston Marathon API');
+      marathonRoute.forEach(([mLat, mLng]) => {
+        state.mapData.push({
+          factor: 'Crowds',
+          color: '#3b82f6',
+          lat: mLat,
+          lng: mLng,
+          value: 94,
+          source: 'Boston Marathon API',
+        });
+      });
+    } else {
+      state.mapData = state.mapData.filter((p) => p.source !== 'Boston Marathon API');
+    }
+  } catch {}
+
+  // API 2: NWS active alerts for Boston area.
+  try {
+    const alertsRes = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lng}`);
+    if (alertsRes.ok) {
+      const alertsData = await alertsRes.json();
+      const alerts = Array.isArray(alertsData?.features) ? alertsData.features.slice(0, 2) : [];
+      alerts.forEach((a) => {
+        const props = a.properties || {};
+        events.push({
+          title: props.event || 'Regional Alert',
+          status: props.severity || 'Active',
+          severity: (props.severity || '').toLowerCase().includes('severe') ? 'high' : 'normal',
+        });
+      });
+    }
+  } catch {}
+
+  state.liveCityEvents = events;
+  state.liveCityEventsStatus = 'success';
 }
 
 async function fetchRealtimeAreaEventsHeat(lat = BOSTON.lat, lng = BOSTON.lng) {
@@ -1717,7 +1884,10 @@ window.selectDestinationSuggestion = selectDestinationSuggestion;
 window.searchLocation = searchLocation;
 window.centerOnCurrentLocation = centerOnCurrentLocation;
 window.startNavigation = startNavigation;
+window.clearDestination = clearDestination;
+window.recenterMap = recenterMap;
 window.endNavigation = endNavigation;
+window.toggleNavSheet = toggleNavSheet;
 window.openProfileModal = openProfileModal;
 window.closeModal = closeModal;
 window.logout = logout;
@@ -1725,5 +1895,3 @@ window.closeEventModal = closeEventModal;
 window.submitMapEvent = submitMapEvent;
 window.deleteEvent = deleteEvent;
 window.fetchWeather = fetchWeather;
-window.openDrawer = openDrawer;
-window.closeDrawer = closeDrawer;
