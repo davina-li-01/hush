@@ -16,7 +16,14 @@ Based on the current implementation:
 https://davina-li-01.github.io/hush/
 
 ## Screenshot
-![Hush app screenshot](./screenshot.png)
+### Onboarding (Step 1)
+![Hush onboarding step 1](./screenshots/onboarding-step-1.png)
+
+### Onboarding (Step 2)
+![Hush onboarding step 2](./screenshots/onboarding-step-2.png)
+
+### Map View
+![Hush map view](./screenshots/map-view.png)
 
 ## What I learned about working with APIs
 
