@@ -27,9 +27,7 @@ https://davina-li-01.github.io/hush/
 
 ## What I learned about working with APIs
 
-Mini Project #3: API Powered App
-
-Milestone 1: 
+# Milestone 1: 
 What does the API response look like?
  },
     },
@@ -102,7 +100,7 @@ Inputs are handled with event listeners (onclick, oninput, Enter key), and API c
 - Live navigation feedback was improved (route preview, active nav overlay, live follow/- reroute). 
 - Styling stayed in the purple theme, but contrast, spacing, and hierarchy were improved for readability on mobile.
 
-Milestone 3:
+# Milestone 3:
 
 # What extension did you add?
 
